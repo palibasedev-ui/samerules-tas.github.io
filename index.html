@@ -111,9 +111,10 @@ textarea{resize:vertical;min-height:84px}
 .letter-col{min-width:0;display:grid;gap:12px;position:sticky;top:calc(env(safe-area-inset-top,0px) + 12px)}
 .envelope{background:var(--paper);color:var(--paper-ink);border:1px solid var(--rule);border-radius:8px;overflow:hidden;box-shadow:0 10px 30px -18px rgba(10,20,40,.45)}
 .env-head{display:grid;gap:4px;padding:14px 18px;border-bottom:1px solid var(--rule);font-size:13px}
-.env-head div{display:grid;grid-template-columns:62px 1fr;gap:8px;min-width:0}
+.env-head div{display:grid;grid-template-columns:62px minmax(0,1fr) auto;gap:8px;min-width:0;align-items:start}
 .env-head span:first-child{color:var(--muted)}
-.env-head span:last-child{word-break:break-word}
+.env-head span + span{word-break:break-word}
+.mini{font:inherit;font-size:12px;font-weight:600;padding:3px 10px;border-radius:4px;border:1px solid var(--rule);background:var(--bg);color:var(--ink);cursor:pointer}
 #letter{display:block;width:100%;border:0;border-radius:0;background:transparent;color:var(--paper-ink);font-family:var(--f-letter);font-size:16px;line-height:1.6;padding:18px;min-height:460px;max-height:62vh;resize:vertical}
 .edit-note{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
 .linkbtn{background:none;border:0;color:var(--line);font:inherit;font-weight:600;cursor:pointer;padding:0;text-decoration:underline}
@@ -122,6 +123,7 @@ textarea{resize:vertical;min-height:84px}
 
 .send{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .btn{font:inherit;font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 14px;border-radius:6px;border:1px solid var(--rule);background:var(--bg);color:var(--ink);text-decoration:none;cursor:pointer;text-align:center}
+#mailapp[hidden] + #copy{grid-column:1 / -1}
 .btn.primary{background:var(--line);color:var(--line-ink);border-color:var(--line)}
 .btn[aria-disabled="true"]{opacity:.45;pointer-events:none}
 .need{font-size:13px;color:var(--warn)}
@@ -275,9 +277,9 @@ footer p{max-width:72ch}
         <div class="letter-col">
           <div class="envelope">
             <div class="env-head">
-              <div><span>To</span><span id="hTo"></span></div>
-              <div><span>Cc</span><span id="hCc"></span></div>
-              <div><span>Subject</span><span id="hSub"></span></div>
+              <div><span>To</span><span id="hTo"></span><button type="button" class="mini" id="cpTo" aria-label="Copy To addresses">Copy</button></div>
+              <div><span>Cc</span><span id="hCc"></span><button type="button" class="mini" id="cpCc" aria-label="Copy Cc address">Copy</button></div>
+              <div><span>Subject</span><span id="hSub"></span><button type="button" class="mini" id="cpSub" aria-label="Copy subject">Copy</button></div>
             </div>
             <label for="letter" class="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Letter text</label>
             <textarea id="letter" spellcheck="true"></textarea>
@@ -400,6 +402,8 @@ footer p{max-width:72ch}
     setLink($("outlook"), "https://outlook.office.com/mail/deeplink/compose?to=" + e(r.to.join(";")) + (r.cc.length ? "&cc=" + e(r.cc.join(";")) : "") + "&subject=" + e(SUBJECT) + "&body=" + e(body), ok);
     setLink($("mailapp"), "mailto:" + r.to.map(e).join(",") + "?" + (r.cc.length ? "cc=" + r.cc.map(e).join(",") + "&" : "") + "subject=" + e(SUBJECT) + "&body=" + e(body), ok);
     $("copy").disabled = false;
+    $("cpTo").hidden = !r.to.length;
+    $("cpCc").hidden = !r.cc.length;
   }
 
   ["name","suburb","role","personal"].forEach(function(k){ els[k].addEventListener("input", refresh); els[k].addEventListener("change", refresh); });
@@ -418,23 +422,43 @@ footer p{max-width:72ch}
   var toastT;
   function toast(msg){ var t=$("toast"); t.textContent=msg; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(function(){t.hidden=true;},2600); }
 
+  // Inside the Claude app viewer, mailto: links aren't decoded (they arrive as raw %20 text), so hide that button there.
+  if (window.claude && typeof window.claude.use === "function") { $("mailapp").hidden = true; }
+
   $("mailapp").addEventListener("click", function(){
     $("copyStatus").textContent = "If no email app opened, use Gmail, Outlook or Copy letter instead.";
   });
 
-  $("copy").addEventListener("click", function(){
-    var r = recipients();
-    var text = "To: " + r.to.join(", ") + (r.cc.length ? "\nCc: " + r.cc.join(", ") : "") + "\nSubject: " + SUBJECT + "\n\n" + els.letter.value;
+  function selectEl(el){
+    if (el.tagName === "TEXTAREA") { el.focus(); el.select(); return; }
+    try { var rg = document.createRange(); rg.selectNodeContents(el); var s = window.getSelection(); s.removeAllRanges(); s.addRange(rg); } catch(e){}
+  }
+  function copyText(text, el, okMsg, toastMsg){
     function fallback(){
-      els.letter.focus(); els.letter.select();
-      $("copyStatus").textContent = "Copying isn't allowed here. The letter is selected: copy it with your keyboard or long-press. Addresses and subject are shown above it.";
+      selectEl(el);
+      $("copyStatus").textContent = "Copying isn't allowed here, so the text is selected. Tap Copy in the menu that appears, or long-press it.";
     }
     try {
       navigator.clipboard.writeText(text).then(function(){
-        $("copyStatus").textContent = "Copied the addresses, subject and letter. Paste them into a new email.";
-        toast("Letter copied");
+        $("copyStatus").textContent = okMsg;
+        toast(toastMsg);
       }, fallback);
     } catch(e){ fallback(); }
+  }
+
+  $("copy").addEventListener("click", function(){
+    copyText(els.letter.value, els.letter,
+      "Letter copied. Paste it into the body of a new email, then use the Copy buttons above the letter for the To, Cc and Subject fields.",
+      "Letter copied");
+  });
+  $("cpTo").addEventListener("click", function(){
+    copyText(recipients().to.join(", "), $("hTo"), "To addresses copied. Paste them into the To field.", "Addresses copied");
+  });
+  $("cpCc").addEventListener("click", function(){
+    copyText(recipients().cc.join(", "), $("hCc"), "Cc address copied. Paste it into the Cc field.", "Cc copied");
+  });
+  $("cpSub").addEventListener("click", function(){
+    copyText(SUBJECT, $("hSub"), "Subject copied. Paste it into the Subject field.", "Subject copied");
   });
 
   refresh();
